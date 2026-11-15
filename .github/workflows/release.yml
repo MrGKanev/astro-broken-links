@@ -30,7 +30,7 @@ jobs:
       - run: npm test
       - run: npm run test:stress
       - run: npm audit
-      - run: npm install --global pnpm@12
+      - run: npm install --global pnpm@12.21.0
       - run: npm run test:package
       - run: npm pack --dry-run
       - run: npm publish --access public --provenance

@@ -1,7 +1,7 @@
 import type { AstroIntegration, AstroConfig } from 'astro';
-import { checkLinks } from './checker.js';
+import { checkLinks, formatReport } from './checker.js';
 import type { IntegrationOptions } from './types.js';
-export { checkLinks } from './checker.js';
+export { checkLinks, formatReport } from './checker.js';
 export type * from './types.js';
 
 export default function brokenLinks(options: IntegrationOptions = {}): AstroIntegration {
@@ -18,9 +18,10 @@ export default function brokenLinks(options: IntegrationOptions = {}): AstroInte
       }); },
       'astro:build:done': async ({ dir, logger }) => {
         const result = await checkLinks({ ...options, directory: dir, site: config.site, base: config.base, format: config.build.format, trailingSlash: config.trailingSlash, redirects: config.redirects, dynamicRoutes });
-        for (const item of result.diagnostics) logger.warn(`${item.page}:${item.line}:${item.column} [${item.code}] ${item.url} — ${item.message}`);
-        logger.info(`Checked ${result.links} references in ${result.pages} pages; ${result.diagnostics.length} problems.`);
-        if (result.diagnostics.length && options.failOnError !== false) throw new Error(`Link validation failed: ${result.diagnostics.length} problems. Set failOnError: false to report without failing.`);
+        const lines = formatReport(result);
+        for (const line of lines.slice(0, -1)) logger.warn(line);
+        logger.info(lines.at(-1)!);
+        if (result.summary.newErrors && options.failOnError !== false) throw new Error(`Link validation failed: ${result.summary.newErrors} new errors. Set failOnError: false to report without failing.`);
       },
     },
   };

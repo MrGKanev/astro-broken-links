@@ -7,6 +7,36 @@ type Cache = Record<string, { checked: number; status: number }>;
 
 export async function checkExternal(urls: Iterable<string>, options: ExternalOptions, receive: (url: string, result: HttpResult) => void): Promise<number> {
   const concurrency = positive(options.concurrency, 8, 'external.concurrency');
+  const perHost = positive(options.perHostConcurrency, 2, 'external.perHostConcurrency');
+  const hosts = new Map<string, { active: number; waiting: Array<() => void> }>();
+  async function limited<T>(url: URL, task: () => Promise<T>): Promise<T> {
+    const host = url.hostname;
+    let state = hosts.get(host);
+    if (!state) { state = { active: 0, waiting: [] }; hosts.set(host, state); }
+    if (state.active >= perHost) await new Promise<void>(resolve => state!.waiting.push(resolve));
+    else state.active++;
+    try { return await task(); }
+    finally {
+      const next = state.waiting.shift();
+      if (next) next();
+      else { state.active--; if (!state.active) hosts.delete(host); }
+    }
+  }
+  // Round-robin host queues keep an initial batch of one domain from monopolizing workers.
+  const hostQueues = new Map<string, string[]>();
+  for (const url of urls) {
+    const host = new URL(url).hostname;
+    const queue = hostQueues.get(host) ?? [];
+    queue.push(url); hostQueues.set(host, queue);
+  }
+  function* ordered(): Generator<string> {
+    for (let index = 0; hostQueues.size; index++) {
+      for (const [host, queue] of hostQueues) {
+        if (index < queue.length) yield queue[index];
+        if (index + 1 >= queue.length) hostQueues.delete(host);
+      }
+    }
+  }
   const timeout = positive(options.timeout, 10000, 'external.timeout');
   const retries = options.retries ?? 2;
   if (!Number.isSafeInteger(retries) || retries < 0 || retries > 10) throw new TypeError('external.retries must be an integer from 0 to 10');
@@ -27,18 +57,32 @@ export async function checkExternal(urls: Iterable<string>, options: ExternalOpt
     }
   }
   let requests = 0;
-  await pool(urls, concurrency, async url => {
+  await pool(ordered(), concurrency, async url => {
     if (Object.hasOwn(cache, url)) { receive(url, { status: cache[url].status, message: 'Cached' }); return; }
     let result: HttpResult = { code: 'network-error', message: 'Request failed' };
     for (let attempt = 0; attempt <= retries; attempt++) {
       let retryAfter = 0;
       try {
         const request = async (method: string) => {
-          requests++;
-          const response = await fetch(url, { method, redirect: 'follow', signal: AbortSignal.timeout(timeout), headers: { 'user-agent': 'astro-broken-links/0.1', ...options.headers } });
-          // Never buffer response bodies, including the GET fallback.
-          await response.body?.cancel();
-          return response;
+          let current = new URL(url);
+          const headers = new Headers({ 'user-agent': 'astro-broken-links/0.1', ...options.headers });
+          for (let hop = 0; ; hop++) {
+            const response = await limited(current, async () => {
+              requests++;
+              const response = await fetch(current, { method, redirect: 'manual', signal: AbortSignal.timeout(timeout), headers });
+              await response.body?.cancel();
+              return response;
+            });
+            const location = response.headers.get('location');
+            if (![301, 302, 303, 307, 308].includes(response.status) || location === null) return response;
+            if (hop >= 20) throw new Error('HTTP redirect chain exceeds 20 hops');
+            const next = new URL(location, current);
+            if (!['http:', 'https:'].includes(next.protocol)) throw new Error('HTTP redirect must use HTTP or HTTPS');
+            if (next.origin !== current.origin) {
+              headers.delete('authorization'); headers.delete('cookie'); headers.delete('proxy-authorization');
+            }
+            current = next;
+          }
         };
         let response = await request('HEAD');
         if ([403, 405, 501].includes(response.status)) response = await request('GET');

@@ -3,11 +3,15 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readHtml } from './html.js';
 import { checkExternal } from './external.js';
+import { classify, applyBaseline } from './diagnostics.js';
+import { redirectMatcher } from './redirects.js';
+export { formatReport } from './diagnostics.js';
 import { atomicJson, glob, pool, positive } from './utils.js';
 import type { CheckOptions, CheckResult, Diagnostic, LinkContext } from './types.js';
 export type * from './types.js';
 
 export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
+  if (options.baseline && options.report && path.resolve(options.baseline.file) === path.resolve(options.report)) throw new TypeError('Baseline and report must use different files');
   const root = await realpath(options.directory instanceof URL ? fileURLToPath(options.directory) : options.directory);
   const concurrency = positive(options.concurrency, 4, 'concurrency');
   const site = new URL(options.site ?? 'https://astro.local');
@@ -36,10 +40,15 @@ export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
     return `${prefix}/${pathname}` || '/';
   }
   const ids = new Map<string, Set<string>>();
-  if (options.anchors !== false) await pool(pages, concurrency, async file => { ids.set(file, (await readHtml(path.join(root, file), false)).ids); });
-  const result: CheckResult = { pages: pages.length, links: 0, externalRequests: 0, skipped: 0, diagnostics: [] };
+  const redirectPages = new Set<string>();
+  if (options.anchors !== false || Object.keys(options.redirects ?? {}).length) await pool(pages, concurrency, async file => {
+    const data = await readHtml(path.join(root, file), false);
+    if (options.anchors !== false) ids.set(file, data.ids);
+    if (data.refresh) redirectPages.add(file);
+  });
+  const result: CheckResult = { pages: pages.length, links: 0, externalRequests: 0, skipped: 0, diagnostics: [], summary: { errors: 0, warnings: 0, known: 0, newErrors: 0, newWarnings: 0, resolved: 0 } };
   const external = new Map<string, Array<LinkContext & { url: string }>>();
-  const redirects = options.redirects ?? {};
+  const matchRedirect = redirectMatcher(options.redirects);
   function localFile(pathname: string): string | undefined {
     if (prefix && pathname !== prefix && !pathname.startsWith(prefix + '/')) return;
     let decoded: string;
@@ -60,7 +69,7 @@ export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
     for (const ref of data.references) {
       result.links++;
       const context: LinkContext = { page, tag: ref.tag, attribute: ref.attribute, line: ref.line, column: ref.column };
-      const add = (code: Diagnostic['code'], message: string) => result.diagnostics.push({ ...context, url: ref.url, code, message });
+      const add = (code: Diagnostic['code'], message: string) => result.diagnostics.push(classify({ ...context, url: ref.url, code, message }, options.rules));
       const ignored = (url: string) => options.ignore?.some(rule => {
         if (typeof rule === 'string') return glob(rule, url);
         if (typeof rule === 'function') return rule(url, context);
@@ -81,12 +90,13 @@ export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
       const visited = new Set<string>();
       let loop = false;
       while (true) {
+        const built = localFile(url.pathname);
+        if (built && !redirectPages.has(built)) break;
         const key = prefix && url.pathname.startsWith(prefix + '/') ? url.pathname.slice(prefix.length) : url.pathname;
-        const redirect = redirects[key] ?? redirects[url.pathname];
-        if (!redirect) break;
-        if (visited.has(url.pathname) || visited.size >= 20) { add('redirect-loop', 'Redirect cycle or chain longer than 20 hops'); loop = true; break; }
-        visited.add(url.pathname);
-        const destination = typeof redirect === 'string' ? redirect : redirect.destination;
+        const destination = matchRedirect(key) ?? (key === url.pathname ? undefined : matchRedirect(url.pathname));
+        if (destination === undefined) break;
+        if (visited.has(url.href) || visited.size >= 20) { add('redirect-loop', 'Redirect cycle or chain longer than 20 hops'); loop = true; break; }
+        visited.add(url.href);
         try {
           const previous = url;
           url = new URL(destination, url);
@@ -95,6 +105,8 @@ export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
         if (url.origin !== site.origin) break;
       }
       if (loop) continue;
+      if (!['http:', 'https:'].includes(url.protocol)) { result.skipped++; continue; }
+      if (visited.size && (ignored(url.href) || ignored(url.pathname))) { result.skipped++; continue; }
       if (url.origin !== site.origin) {
         if (options.external) {
           url.hash = ''; const occurrences = external.get(url.href) ?? [];
@@ -121,9 +133,10 @@ export async function checkLinks(options: CheckOptions): Promise<CheckResult> {
     }
   });
   if (options.external) result.externalRequests = await checkExternal(external.keys(), typeof options.external === 'object' ? options.external : {}, (url, response) => {
-    if (response.code) for (const context of external.get(url)!) result.diagnostics.push({ ...context, code: response.code, message: response.message, status: response.status });
+    if (response.code) for (const context of external.get(url)!) result.diagnostics.push(classify({ ...context, code: response.code, message: response.message, status: response.status }, options.rules));
   });
   result.diagnostics.sort((a, b) => a.page.localeCompare(b.page) || a.line - b.line || a.column - b.column || a.url.localeCompare(b.url) || a.code.localeCompare(b.code));
+  await applyBaseline(result, options.baseline);
   if (options.report) await atomicJson(options.report, result);
   return result;
 }

@@ -38,3 +38,25 @@ test('recognizes on-demand Astro routes without pretending to check their respon
   const result = JSON.parse(await readFile(report, 'utf8'));
   assert.deepEqual(result.diagnostics, []); assert.equal(result.skipped, 1); assert.equal(result.pages, 1);
 });
+
+
+test('Astro build validates parameterized redirects, warning-only builds and baseline CI', async t => {
+  const root = await mkdtemp(path.resolve('test/.fixture-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'src/pages/articles'), { recursive: true });
+  await writeFile(path.join(root, 'src/pages/articles/[...slug].astro'), "---\nexport function getStaticPaths() { return [{ params: { slug: 'nested/page' } }, { params: { slug: 'special' } }]; }\n---\n<h1 id=\"ok\">OK</h1>");
+  await writeFile(path.join(root, 'src/pages/index.astro'), '<a href="/blog/nested/page#ok">Old</a><a href="/real">Real</a>');
+  await writeFile(path.join(root, 'src/pages/real.astro'), '<h1>Existing page wins</h1>');
+  const report = path.join(root, 'report.json');
+  const settings = { root: pathToFileURL(root + '/'), configFile: false, logLevel: 'silent', redirects: { '/blog/[...slug]': '/articles/[...slug]' } };
+  await build({ ...settings, integrations: [brokenLinks({ report })] });
+  assert.deepEqual(JSON.parse(await readFile(report, 'utf8')).diagnostics, []);
+  await writeFile(path.join(root, 'src/pages/index.astro'), '<a href="/gone">Gone</a>');
+  await build({ ...settings, integrations: [brokenLinks({ report, rules: { 'missing-file': 'warning' } })] });
+  assert.equal(JSON.parse(await readFile(report, 'utf8')).summary.newWarnings, 1);
+  const file = path.join(root, 'baseline.json');
+  await build({ ...settings, integrations: [brokenLinks({ baseline: { file, update: true } })] });
+  await build({ ...settings, integrations: [brokenLinks({ baseline: { file } })] });
+  await writeFile(path.join(root, 'src/pages/index.astro'), '<a href="/gone">Gone</a><a href="/new">New</a>');
+  await assert.rejects(build({ ...settings, integrations: [brokenLinks({ baseline: { file } })] }), /1 new errors/);
+});

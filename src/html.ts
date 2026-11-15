@@ -2,11 +2,11 @@ import { createReadStream } from 'node:fs';
 import { SAXParser } from 'parse5-sax-parser';
 import type { LinkContext } from './types.js';
 export interface Reference extends Omit<LinkContext, 'page'> { url: string; navigation: boolean }
-export interface HtmlData { ids: Set<string>; references: Reference[]; base?: string }
+export interface HtmlData { ids: Set<string>; references: Reference[]; base?: string; refresh: boolean }
 
 // Tokenize without constructing or retaining a DOM. The parser handles entities, comments and raw text.
 export async function readHtml(file: string, references = true, assets = true): Promise<HtmlData> {
-  const result: HtmlData = { ids: new Set(), references: [] };
+  const result: HtmlData = { ids: new Set(), references: [], refresh: false };
   const parser = new SAXParser({ sourceCodeLocationInfo: references });
   parser.on('startTag', token => {
     const attrs = new Map(token.attrs.map(a => [a.name, a.value]));
@@ -14,6 +14,7 @@ export async function readHtml(file: string, references = true, assets = true): 
     if (id !== undefined) result.ids.add(id);
     const name = token.tagName === 'a' ? attrs.get('name') : undefined;
     if (name !== undefined) result.ids.add(name);
+    if (token.tagName === 'meta' && attrs.get('http-equiv')?.toLowerCase() === 'refresh' && /;\s*url\s*=/i.test(attrs.get('content') ?? '')) result.refresh = true;
     if (!references) return;
     if (token.tagName === 'base' && result.base === undefined && attrs.has('href')) result.base = attrs.get('href');
     const add = (attribute: string, navigation = false, override?: string) => {
