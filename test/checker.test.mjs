@@ -92,7 +92,7 @@ test('external deduplication, GET fallback, retries, redirects, bounded concurre
   assert.equal(hits.get('HEAD /ok'), 2); // One direct request and one HTTP redirect.
   assert.equal(hits.get('GET /fallback'), 1); assert.equal(hits.get('HEAD /retry'), 2);
   assert.equal(first.diagnostics.length, 1); assert.equal(first.diagnostics[0].status, 404); assert.ok(peak <= 2);
-  const second = await checkLinks(options); assert.equal(second.externalRequests, 1); assert.equal(second.diagnostics.length, 1);
+  const second = await checkLinks(options); assert.equal(second.externalRequests, 2); assert.equal(second.diagnostics.length, 1);
   const data = JSON.parse(await readFile(cache.file, 'utf8'));
   for (const entry of Object.values(data.entries)) entry.checked = 0;
   await writeFile(cache.file, JSON.stringify(data));

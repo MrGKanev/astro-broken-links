@@ -85,7 +85,7 @@ export async function checkExternal(urls: Iterable<string>, options: ExternalOpt
           }
         };
         let response = await request('HEAD');
-        if ([403, 405, 501].includes(response.status)) response = await request('GET');
+        if ([403, 404, 405, 501].includes(response.status)) response = await request('GET');
         result = { status: response.status, message: `HTTP ${response.status}`, ...(response.ok ? {} : { code: 'http-error' as const }) };
         if (response.ok) { cache[url] = { status: response.status, checked: Date.now() }; break; }
         if (![408, 429, 500, 502, 503, 504].includes(response.status)) break;

@@ -139,3 +139,12 @@ test('regular built pages take precedence over a redirect pattern; refresh stubs
   assert.deepEqual((await checkLinks({ directory, redirects })).diagnostics, []);
   assert.deepEqual((await checkLinks({ directory, redirects, anchors: false })).diagnostics, []);
 });
+
+
+test('external HEAD 404 falls back to GET before declaring a URL broken', async t => {
+  const methods = [];
+  const port = await serve(t, (req, res) => { methods.push(req.method); res.writeHead(req.method === 'HEAD' ? 404 : 200); res.end(); });
+  const directory = await fixture(t, { 'index.html': `<a href="http://localhost:${port}/valid">Valid</a>` });
+  const result = await checkLinks({ directory, external: { retries: 0 } });
+  assert.deepEqual(result.diagnostics, []); assert.deepEqual(methods, ['HEAD', 'GET']); assert.equal(result.externalRequests, 2);
+});

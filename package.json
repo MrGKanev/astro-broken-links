@@ -1,6 +1,6 @@
 {
   "name": "astro-broken-links",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Streaming link validation for Astro builds, with anchors, assets and CI reports.",
   "type": "module",
   "license": "MIT",
