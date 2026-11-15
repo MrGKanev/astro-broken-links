@@ -1,0 +1,72 @@
+{
+  "name": "astro-broken-links",
+  "version": "0.1.0",
+  "description": "Streaming link validation for Astro builds, with anchors, assets and CI reports.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./checker": {
+      "types": "./dist/checker.d.ts",
+      "import": "./dist/checker.js"
+    }
+  },
+  "bin": {
+    "astro-broken-links": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "keywords": [
+    "astro",
+    "astro-integration",
+    "links",
+    "link-checker",
+    "accessibility"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:stress": "npm run build && node --max-old-space-size=128 test/stress.mjs",
+    "prepack": "npm run build",
+    "test:package": "node scripts/test-package.mjs"
+  },
+  "peerDependencies": {
+    "astro": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "parse5-sax-parser": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "astro": "^7.4.12",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrGKanev/astro-broken-links.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrGKanev/astro-broken-links/issues"
+  },
+  "homepage": "https://github.com/MrGKanev/astro-broken-links#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
